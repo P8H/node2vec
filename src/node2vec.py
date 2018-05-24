@@ -2,6 +2,9 @@ import numpy as np
 import networkx as nx
 import random
 
+from numba import jit
+from pathos.multiprocessing import ProcessingPool
+
 
 class Graph():
     def __init__(self, nx_G, is_directed, p, q):
@@ -19,7 +22,6 @@ class Graph():
         alias_edges = self.alias_edges
 
         walk = [start_node]
-
         while len(walk) < walk_length:
             cur = walk[-1]
             cur_nbrs = sorted(G.neighbors(cur))
@@ -40,17 +42,42 @@ class Graph():
         '''
         Repeatedly simulate random walks from each node.
         '''
+
         G = self.G
         walks = []
         nodes = list(G.nodes())
-        print 'Walk iteration:'
+        print('Walk iteration:')
         for walk_iter in range(num_walks):
-            print str(walk_iter + 1), '/', str(num_walks)
+            print(str(walk_iter + 1), '/', str(num_walks))
             random.shuffle(nodes)
             for node in nodes:
                 walks.append(self.node2vec_walk(walk_length=walk_length, start_node=node))
-
         return walks
+
+    def simulate_walks_mult(self, num_walks, walk_length):
+        '''
+        Repeatedly simulate random walks from each node.
+        '''
+
+        G = self.G
+        nodes = list(G.nodes())
+
+        def _single_walk(walk_iter):
+            print(str(walk_iter + 1), '/', str(num_walks))
+            nodes2 = list(nodes)
+            random.shuffle(nodes2)
+            walks = list()
+            for node in nodes2:
+                walks.append(self.node2vec_walk(walk_length=walk_length, start_node=node))
+            return walks
+
+        flatten = lambda l: [item for sublist in l for item in sublist]
+
+        print('Walk iteration:')
+        pool = ProcessingPool()
+        all_walks = pool.map(_single_walk, range(num_walks))
+
+        return flatten(all_walks)
 
     def get_alias_edge(self, src, dst):
         '''
@@ -72,6 +99,37 @@ class Graph():
         normalized_probs = [float(u_prob) / norm_const for u_prob in unnormalized_probs]
 
         return alias_setup(normalized_probs)
+
+    def preprocess_transition_probs_multi(self):
+        '''
+        Preprocessing of transition probabilities for guiding the random walks.
+        '''
+        G = self.G
+        is_directed = self.is_directed
+
+        def _single_probe(node):
+            unnormalized_probs = [G[node][nbr]['weight'] for nbr in sorted(G.neighbors(node))]
+            norm_const = sum(unnormalized_probs)
+            normalized_probs = [float(u_prob) / norm_const for u_prob in unnormalized_probs]
+            return node, alias_setup(normalized_probs)
+
+        pool = ProcessingPool()
+        alias_nodes = dict(pool.map(_single_probe, G.nodes()))
+
+        alias_edges = {}
+
+        if is_directed:
+            for edge in G.edges():
+                alias_edges[edge] = self.get_alias_edge(edge[0], edge[1])
+        else:
+            for edge in G.edges():
+                alias_edges[edge] = self.get_alias_edge(edge[0], edge[1])
+                alias_edges[(edge[1], edge[0])] = self.get_alias_edge(edge[1], edge[0])
+
+        self.alias_nodes = alias_nodes
+        self.alias_edges = alias_edges
+
+        return
 
     def preprocess_transition_probs(self):
         '''
@@ -100,10 +158,9 @@ class Graph():
 
         self.alias_nodes = alias_nodes
         self.alias_edges = alias_edges
-
         return
 
-
+@jit
 def alias_setup(probs):
     '''
     Compute utility lists for non-uniform sampling from discrete distributions.
@@ -136,7 +193,7 @@ def alias_setup(probs):
 
     return J, q
 
-
+@jit
 def alias_draw(J, q):
     '''
     Draw sample from a non-uniform discrete distribution using alias sampling.

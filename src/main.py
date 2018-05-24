@@ -15,6 +15,11 @@ import networkx as nx
 import node2vec
 from gensim.models import Word2Vec
 
+import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
+
+from numba import jit
+
 
 def parse_args():
     '''
@@ -60,6 +65,9 @@ def parse_args():
     parser.add_argument('--directed', dest='directed', action='store_true',
                         help='Graph is (un)directed. Default is undirected.')
     parser.add_argument('--undirected', dest='undirected', action='store_false')
+    parser.add_argument('--multiprocess', dest='multiprocess', action='store_true',
+                        help='Boolean specifying if multiprocessing mode should be use.')
+    parser.set_defaults(multiprocess=False)
     parser.set_defaults(directed=False)
 
     return parser.parse_args()
@@ -69,12 +77,19 @@ def read_graph():
     '''
     Reads the input network in networkx.
     '''
-    if args.weighted:
-        G = nx.read_edgelist(args.input, nodetype=int, data=(('weight', float),), create_using=nx.DiGraph())
+
+    if args.input.endswith('.gml'):
+        G = nx.read_gml(args.input)
+        if not args.weighted:
+            for edge in G.edges():
+                G[edge[0]][edge[1]]['weight'] = 1
     else:
-        G = nx.read_edgelist(args.input, nodetype=int, create_using=nx.DiGraph())
-        for edge in G.edges():
-            G[edge[0]][edge[1]]['weight'] = 1
+        if args.weighted:
+            G = nx.read_edgelist(args.input, nodetype=int, data=(('weight', float),), create_using=nx.DiGraph())
+        else:
+            G = nx.read_edgelist(args.input, nodetype=int, create_using=nx.DiGraph())
+            for edge in G.edges():
+                G[edge[0]][edge[1]]['weight'] = 1
 
     if not args.directed:
         G = G.to_undirected()
@@ -89,20 +104,32 @@ def learn_embeddings(walks):
     walks = [map(str, walk) for walk in walks]
     model = Word2Vec(walks, size=args.dimensions, window=args.window_size, min_count=0, sg=1, workers=args.workers,
                      iter=args.iter)
-    model.save_word2vec_format(args.output)
+    model.wv.save_word2vec_format(args.output)
 
-    return
+    return model
 
 
+@jit
 def main(args):
     '''
     Pipeline for representational learning for all nodes in a graph.
     '''
     nx_G = read_graph()
     G = node2vec.Graph(nx_G, args.directed, args.p, args.q)
-    G.preprocess_transition_probs()
-    walks = G.simulate_walks(args.num_walks, args.walk_length)
-    learn_embeddings(walks)
+    if args.multiprocess:
+        G.preprocess_transition_probs_multi()
+        walks = G.simulate_walks_mult(args.num_walks, args.walk_length)
+    else:
+        G.preprocess_transition_probs()
+        walks = G.simulate_walks(args.num_walks, args.walk_length)
+    model = learn_embeddings(walks)
+    vec = [model.wv.get_vector(str(node)) for node in nx_G.nodes().keys()]
+    random_state = 170
+    y_prediction = KMeans(n_clusters=3, random_state=random_state).fit_predict(vec)
+    nx.draw(nx_G, pos=nx.kamada_kawai_layout(nx_G), node_color=y_prediction, edge_color='gray')
+
+    plt.show()
+    return
 
 
 if __name__ == "__main__":
