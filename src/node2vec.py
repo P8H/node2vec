@@ -146,7 +146,6 @@ class Graph():
             alias_nodes[node] = alias_setup(normalized_probs)
 
         alias_edges = {}
-        triads = {}
 
         if is_directed:
             for edge in G.edges():
@@ -159,6 +158,7 @@ class Graph():
         self.alias_nodes = alias_nodes
         self.alias_edges = alias_edges
         return
+
 
 @jit
 def alias_setup(probs):
@@ -192,6 +192,7 @@ def alias_setup(probs):
             larger.append(large)
 
     return J, q
+
 
 @jit
 def alias_draw(J, q):
