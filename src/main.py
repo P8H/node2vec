@@ -97,11 +97,11 @@ def read_graph():
     return G
 
 
-def learn_embeddings(walks):
+def learn_embeddings(walks, G):
     '''
     Learn embeddings by optimizing the Skipgram objective using SGD.
     '''
-    walks = [map(str, walk) for walk in walks]
+    walks = [map(lambda u: str(G.G.degree(u)), walk) for walk in walks]
     model = Word2Vec(walks, size=args.dimensions, window=args.window_size, min_count=0, sg=1, workers=args.workers,
                      iter=args.iter)
     model.wv.save_word2vec_format(args.output)
@@ -122,8 +122,8 @@ def main(args):
     else:
         G.preprocess_transition_probs()
         walks = G.simulate_walks(args.num_walks, args.walk_length)
-    model = learn_embeddings(walks)
-    vec = [model.wv.get_vector(str(node)) for node in nx_G.nodes().keys()]
+    model = learn_embeddings(walks, G)
+    vec = [model.wv.get_vector(str(G.G.degree(node))) for node in nx_G.nodes().keys()]
     random_state = 170
     y_prediction = KMeans(n_clusters=3, random_state=random_state).fit_predict(vec)
     nx.draw(nx_G, pos=nx.kamada_kawai_layout(nx_G), node_color=y_prediction, edge_color='gray')
